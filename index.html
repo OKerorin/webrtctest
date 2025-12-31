@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRTC Manual Signaling Demo</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; line-height: 1.6; }
+        textarea { width: 100%; height: 150px; display: block; margin-bottom: 10px; }
+        .container { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .box { border: 1px solid #ccc; padding: 15px; border-radius: 8px; }
+        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        button:disabled { background: #ccc; }
+        #chat-log { height: 100px; overflow-y: scroll; border: 1px solid #eee; padding: 10px; background: #f9f9f9; }
+    </style>
+</head>
+<body>
+
+    <h1>WebRTC 手動接続デモ</h1>
+    <p>1. 片方で「オファー作成」を押し、出た文字列をもう片方の「相手の情報」に貼ります。<br>
+       2. もう片方で「アンサー作成」を押し、出た文字列を最初の「相手の情報」に貼ります。</p>
+
+    <div class="container">
+        <div class="box">
+            <h3>1. 自分の情報 (SDP / ICE)</h3>
+            <textarea id="local-sdp" readonly placeholder="ここに出力される情報をコピーして相手に送ります"></textarea>
+            <button id="btn-create-offer">オファー作成 (開始側)</button>
+            <button id="btn-create-answer" disabled>アンサー作成 (受取側)</button>
+        </div>
+
+        <div class="box">
+            <h3>2. 相手の情報 (SDP / ICE)</h3>
+            <textarea id="remote-sdp" placeholder="相手から受け取った情報をここに貼り付けます"></textarea>
+            <button id="btn-set-remote">相手の情報を適用</button>
+        </div>
+    </div>
+
+    <hr>
+
+    <div class="box">
+        <h3>3. チャット (接続後に有効化)</h3>
+        <div id="chat-log"></div>
+        <input type="text" id="chat-input" placeholder="メッセージを入力..." disabled>
+        <button id="btn-send" disabled>送信</button>
+    </div>
+
+    <script>
+        const pc = new RTCPeerConnection({
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        });
+
+        let dataChannel;
+
+        // ICE Candidateの収集が完了したらSDPを表示する
+        pc.onicecandidate = event => {
+            if (!event.candidate) {
+                console.log("ICE収集完了");
+                document.getElementById('local-sdp').value = JSON.stringify(pc.localDescription);
+            }
+        };
+
+        // データチャネルの設定（オファー側）
+        function setupDataChannel(channel) {
+            dataChannel = channel;
+            dataChannel.onopen = () => {
+                log("接続完了！");
+                document.getElementById('chat-input').disabled = false;
+                document.getElementById('btn-send').disabled = false;
+            };
+            dataChannel.onmessage = e => log("相手: " + e.data);
+        }
+
+        // 1. オファーの作成
+        document.getElementById('btn-create-offer').onclick = async () => {
+            setupDataChannel(pc.createDataChannel("chat"));
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            document.getElementById('btn-create-offer').disabled = true;
+        };
+
+        // 2. 相手がオファーを送ってきた時のアンサー作成
+        document.getElementById('btn-create-answer').onclick = async () => {
+            const offer = JSON.parse(document.getElementById('remote-sdp').value);
+            await pc.setRemoteDescription(offer);
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+            document.getElementById('btn-create-answer').disabled = true;
+        };
+
+        // 3. 相手の情報をセット
+        document.getElementById('btn-set-remote').onclick = async () => {
+            const remoteValue = document.getElementById('remote-sdp').value;
+            if (!remoteValue) return alert("情報を入力してください");
+            
+            const remoteDesc = JSON.parse(remoteValue);
+            if (remoteDesc.type === "offer") {
+                document.getElementById('btn-create-answer').disabled = false;
+                log("オファーを受信しました。「アンサー作成」を押してください。");
+            } else {
+                await pc.setRemoteDescription(remoteDesc);
+                log("アンサーを適用しました。");
+            }
+        };
+
+        // データチャネル受信時の処理（受取側）
+        pc.ondatachannel = event => {
+            setupDataChannel(event.channel);
+        };
+
+        // チャット機能
+        function log(msg) {
+            const div = document.createElement('div');
+            div.textContent = msg;
+            document.getElementById('chat-log').appendChild(div);
+        }
+
+        document.getElementById('btn-send').onclick = () => {
+            const input = document.getElementById('chat-input');
+            dataChannel.send(input.value);
+            log("自分: " + input.value);
+            input.value = "";
+        };
+    </script>
+</body>
+</html>
